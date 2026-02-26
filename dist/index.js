@@ -1,13 +1,13 @@
 // hooks/getDataFromWallet.ts
 import { MasterCertificate, Utils } from "@bsv/sdk";
-async function getDataFromWallet(userWallet, options) {
+async function getDataFromWallet(userWallet, options, certificate) {
   const errors = {};
   const addError = (key, message) => {
     (errors[key] ?? (errors[key] = [])).push(message);
   };
-  return getDataFromWalletWithOptions(userWallet, options, errors, addError);
+  return getDataFromWalletWithOptions(userWallet, options, errors, addError, certificate);
 }
-async function getDataFromWalletWithOptions(userWallet, options, errors, addError) {
+async function getDataFromWalletWithOptions(userWallet, options, errors, addError, providedCertificate) {
   if (!userWallet) {
     addError("wallet", "No wallet available");
     return {
@@ -52,7 +52,22 @@ async function getDataFromWalletWithOptions(userWallet, options, errors, addErro
     const certifiers = (options?.certifiers ?? []).filter(
       (key) => typeof key === "string" && key.trim() !== ""
     );
-    if (certifiers.length === 0) {
+    const connectionTypesB64 = connectionTypes.map((connType) => Utils.toBase64(Utils.toArray(connType)));
+    if (providedCertificate) {
+      const missingField = typeof providedCertificate.type !== "string" || providedCertificate.type.trim() === "" ? "type" : providedCertificate.keyring === void 0 ? "keyring" : providedCertificate.fields === void 0 ? "fields" : typeof providedCertificate.certifier !== "string" || providedCertificate.certifier.trim() === "" ? "certifier" : null;
+      if (missingField) {
+        addError("certificate", `Provided certificate is missing required field: ${missingField}`);
+        const maybeErrors2 = Object.keys(errors).length > 0 ? errors : void 0;
+        return { success: false, data: null, errors: maybeErrors2 };
+      }
+      if (providedCertificate.type !== profileCertTypeB64) {
+        addError("certificate", "Provided certificate type does not match the expected profile type");
+        const maybeErrors2 = Object.keys(errors).length > 0 ? errors : void 0;
+        return { success: false, data: null, errors: maybeErrors2 };
+      }
+    }
+    const needsListCertificates = !providedCertificate || connectionTypes.length > 0;
+    if (needsListCertificates && certifiers.length === 0) {
       addError("config", "No certifiers provided");
       const maybeErrors2 = Object.keys(errors).length > 0 ? errors : void 0;
       return {
@@ -61,14 +76,16 @@ async function getDataFromWalletWithOptions(userWallet, options, errors, addErro
         errors: maybeErrors2
       };
     }
-    const connectionTypesB64 = connectionTypes.map((connType) => Utils.toBase64(Utils.toArray(connType)));
-    const requestedTypesB64 = [profileCertTypeB64, ...connectionTypesB64];
-    const certificates = await userWallet.listCertificates({
-      certifiers,
-      types: requestedTypesB64,
-      limit: Math.max(10, requestedTypesB64.length * 3)
-    });
-    const certificate = certificates.certificates.find((c) => c.type === profileCertTypeB64);
+    const requestedTypesB64 = providedCertificate ? [...connectionTypesB64] : [profileCertTypeB64, ...connectionTypesB64];
+    let walletCertificates = { certificates: [] };
+    if (requestedTypesB64.length > 0) {
+      walletCertificates = await userWallet.listCertificates({
+        certifiers,
+        types: requestedTypesB64,
+        limit: Math.max(10, requestedTypesB64.length * 3)
+      });
+    }
+    const certificate = providedCertificate ?? walletCertificates.certificates.find((c) => c.type === profileCertTypeB64);
     if (!certificate) {
       addError("certificate", "No certificate found");
       const maybeErrors2 = Object.keys(errors).length > 0 ? errors : void 0;
@@ -116,7 +133,7 @@ async function getDataFromWalletWithOptions(userWallet, options, errors, addErro
       const connType = connectionTypes[i];
       try {
         const connTypeB64 = connectionTypesB64[i];
-        const connCert = certificates.certificates.find((c) => c.type === connTypeB64);
+        const connCert = walletCertificates.certificates.find((c) => c.type === connTypeB64);
         if (connCert) {
           const connFields = await MasterCertificate.decryptFields(
             userWallet,

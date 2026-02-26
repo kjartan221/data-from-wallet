@@ -10,6 +10,12 @@ interface GetDataFromWalletOptions {
     profileType?: string;
     basket?: string;
 }
+interface ProvidedCertificate {
+    type: string;
+    keyring: any;
+    fields: any;
+    certifier: string;
+}
 interface ConnectionData {
     type: string;
     url: string;
@@ -36,6 +42,6 @@ interface ProfileData {
  * Checks if user has a certificate and fetches profile data from wallet
  * Returns profile data if certificate exists, null if no certificate
  */
-declare function getDataFromWallet(userWallet: any, options?: GetDataFromWalletOptions): Promise<GetDataFromWalletResult>;
+declare function getDataFromWallet(userWallet: any, options?: GetDataFromWalletOptions, certificate?: ProvidedCertificate): Promise<GetDataFromWalletResult>;
 
-export { type ConnectionData, type GetDataFromWalletErrors, type GetDataFromWalletOptions, type GetDataFromWalletResult, type ProfileData, getDataFromWallet };
+export { type ConnectionData, type GetDataFromWalletErrors, type GetDataFromWalletOptions, type GetDataFromWalletResult, type ProfileData, type ProvidedCertificate, getDataFromWallet };

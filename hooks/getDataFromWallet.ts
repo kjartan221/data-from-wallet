@@ -15,6 +15,13 @@ export interface GetDataFromWalletOptions {
     basket?: string;
 }
 
+export interface ProvidedCertificate {
+    type: string;
+    keyring: any;
+    fields: any;
+    certifier: string;
+}
+
 export interface ConnectionData {
     type: string;
     url: string;
@@ -38,20 +45,21 @@ export interface ProfileData {
  * Checks if user has a certificate and fetches profile data from wallet
  * Returns profile data if certificate exists, null if no certificate
  */
-export async function getDataFromWallet(userWallet: any, options?: GetDataFromWalletOptions): Promise<GetDataFromWalletResult> {
+export async function getDataFromWallet(userWallet: any, options?: GetDataFromWalletOptions, certificate?: ProvidedCertificate): Promise<GetDataFromWalletResult> {
     const errors: GetDataFromWalletErrors = {};
     const addError = (key: string, message: string) => {
         (errors[key] ??= []).push(message);
     };
 
-    return getDataFromWalletWithOptions(userWallet, options, errors, addError);
+    return getDataFromWalletWithOptions(userWallet, options, errors, addError, certificate);
 }
 
 async function getDataFromWalletWithOptions(
     userWallet: any,
     options: GetDataFromWalletOptions | undefined,
     errors: GetDataFromWalletErrors,
-    addError: (key: string, message: string) => void
+    addError: (key: string, message: string) => void,
+    providedCertificate?: ProvidedCertificate
 ): Promise<GetDataFromWalletResult> {
 
     if (!userWallet) {
@@ -110,7 +118,34 @@ async function getDataFromWalletWithOptions(
             (key): key is string => typeof key === 'string' && key.trim() !== ''
         );
 
-        if (certifiers.length === 0) {
+        const connectionTypesB64 = connectionTypes.map((connType) => Utils.toBase64(Utils.toArray(connType)));
+
+        // Validate the provided certificate when given
+        if (providedCertificate) {
+            const missingField =
+                typeof providedCertificate.type !== 'string' || providedCertificate.type.trim() === '' ? 'type' :
+                providedCertificate.keyring === undefined ? 'keyring' :
+                providedCertificate.fields === undefined ? 'fields' :
+                typeof providedCertificate.certifier !== 'string' || providedCertificate.certifier.trim() === '' ? 'certifier' :
+                null;
+
+            if (missingField) {
+                addError('certificate', `Provided certificate is missing required field: ${missingField}`);
+                const maybeErrors = Object.keys(errors).length > 0 ? errors : undefined;
+                return { success: false, data: null, errors: maybeErrors };
+            }
+
+            if (providedCertificate.type !== profileCertTypeB64) {
+                addError('certificate', 'Provided certificate type does not match the expected profile type');
+                const maybeErrors = Object.keys(errors).length > 0 ? errors : undefined;
+                return { success: false, data: null, errors: maybeErrors };
+            }
+        }
+
+        // listCertificates is needed when fetching the profile cert from the wallet, or when there are connection types to resolve
+        const needsListCertificates = !providedCertificate || connectionTypes.length > 0;
+
+        if (needsListCertificates && certifiers.length === 0) {
             addError('config', 'No certifiers provided');
             const maybeErrors = Object.keys(errors).length > 0 ? errors : undefined;
             return {
@@ -120,15 +155,22 @@ async function getDataFromWalletWithOptions(
             };
         }
 
-        const connectionTypesB64 = connectionTypes.map((connType) => Utils.toBase64(Utils.toArray(connType)));
-        const requestedTypesB64 = [profileCertTypeB64, ...connectionTypesB64];
-        const certificates = await userWallet.listCertificates({
-            certifiers,
-            types: requestedTypesB64,
-            limit: Math.max(10, requestedTypesB64.length * 3),
-        });
+        // Exclude the profile type from the wallet request when the caller already supplied the certificate
+        const requestedTypesB64 = providedCertificate
+            ? [...connectionTypesB64]
+            : [profileCertTypeB64, ...connectionTypesB64];
 
-        const certificate = certificates.certificates.find((c: any) => c.type === profileCertTypeB64);
+        let walletCertificates: { certificates: any[] } = { certificates: [] };
+        if (requestedTypesB64.length > 0) {
+            walletCertificates = await userWallet.listCertificates({
+                certifiers,
+                types: requestedTypesB64,
+                limit: Math.max(10, requestedTypesB64.length * 3),
+            });
+        }
+
+        const certificate = providedCertificate
+            ?? walletCertificates.certificates.find((c: any) => c.type === profileCertTypeB64);
 
         if (!certificate) {
             addError('certificate', 'No certificate found');
@@ -186,7 +228,7 @@ async function getDataFromWalletWithOptions(
             const connType = connectionTypes[i];
             try {
                 const connTypeB64 = connectionTypesB64[i];
-                const connCert = certificates.certificates.find((c: any) => c.type === connTypeB64);
+                const connCert = walletCertificates.certificates.find((c: any) => c.type === connTypeB64);
 
                 if (connCert) {
                     // Decrypt the connection URL from certificate
