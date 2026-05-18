@@ -53,16 +53,6 @@ async function getDataFromWalletWithOptions(userWallet, options, errors, addErro
         errors: maybeErrors2
       };
     }
-    const basket = typeof options?.basket === "string" && options.basket.trim() !== "" ? options.basket : null;
-    if (!basket) {
-      addError("config", "No basket provided");
-      const maybeErrors2 = Object.keys(errors).length > 0 ? errors : void 0;
-      return {
-        success: false,
-        data: null,
-        errors: maybeErrors2
-      };
-    }
     const profileCertTypeB64 = import_sdk.Utils.toBase64(import_sdk.Utils.toArray(profileType));
     const extractConnectionTypeName = (certType) => {
       if (certType.includes("LinkedIn")) return "LinkedIn";
@@ -127,33 +117,16 @@ async function getDataFromWalletWithOptions(userWallet, options, errors, addErro
       certificate.fields,
       certificate.certifier
     );
-    const token = await userWallet.listOutputs({
-      basket,
-      includeCustomInstructions: true,
-      limit: 1
-    });
-    if (token.outputs.length === 0) {
-      addError("token", "No token found");
-      const maybeErrors2 = Object.keys(errors).length > 0 ? errors : void 0;
-      return {
-        success: false,
-        data: null,
-        errors: maybeErrors2
-      };
-    }
-    const output = token.outputs[0];
-    let tokenData;
-    try {
-      tokenData = JSON.parse(output.customInstructions);
-    } catch {
-      addError("token", "Invalid token customInstructions JSON");
-      const maybeErrors2 = Object.keys(errors).length > 0 ? errors : void 0;
-      return {
-        success: false,
-        data: null,
-        errors: maybeErrors2
-      };
-    }
+    const safeJsonParse = (raw, fallback) => {
+      if (typeof raw !== "string" || raw === "") return fallback;
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return fallback;
+      }
+    };
+    const privateFields = safeJsonParse(decryptedFields.privateFields, []);
+    const websites = safeJsonParse(decryptedFields.websites, []);
     const connections = [];
     for (let i = 0; i < connectionTypes.length; i++) {
       const connType = connectionTypes[i];
@@ -184,14 +157,14 @@ async function getDataFromWalletWithOptions(userWallet, options, errors, addErro
     }
     const profileData = {
       displayName: decryptedFields.displayName,
-      description: tokenData.description || "",
+      description: decryptedFields.description || "",
       locationLng: Number(decryptedFields.lng),
       locationLat: Number(decryptedFields.lat),
       email: decryptedFields.email,
       phoneNumber: decryptedFields.phoneNumber,
-      imageKey: tokenData.imageKey || null,
-      privateFields: tokenData.privateFields || [],
-      websites: tokenData.websites || [],
+      imageKey: decryptedFields.imageKey || null,
+      privateFields,
+      websites,
       connections
     };
     const maybeErrors = Object.keys(errors).length > 0 ? errors : void 0;

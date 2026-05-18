@@ -12,6 +12,7 @@ export interface GetDataFromWalletOptions {
     certifiers?: string[];
     connectionTypes?: string[];
     profileType?: string;
+    /** @deprecated profile data now lives entirely in the certificate; this is ignored. */
     basket?: string;
 }
 
@@ -35,7 +36,7 @@ export interface ProfileData {
     locationLat: number;
     email: string;
     phoneNumber: string;
-    imageKey: string | null; // S3 key from token
+    imageKey: string | null;
     privateFields: string[];
     websites: Array<{ id: string; type: string; url: string; makePublic: boolean }>;
     connections: ConnectionData[];
@@ -85,20 +86,6 @@ async function getDataFromWalletWithOptions(
             };
         }
 
-        const basket = typeof options?.basket === 'string' && options.basket.trim() !== ''
-            ? options.basket
-            : null;
-
-        if (!basket) {
-            addError('config', 'No basket provided');
-            const maybeErrors = Object.keys(errors).length > 0 ? errors : undefined;
-            return {
-                success: false,
-                data: null,
-                errors: maybeErrors,
-            };
-        }
-        
         const profileCertTypeB64 = Utils.toBase64(Utils.toArray(profileType));
 
         const extractConnectionTypeName = (certType: string): string => {
@@ -182,7 +169,7 @@ async function getDataFromWalletWithOptions(
             };
         }
 
-        // Decrypt certificate fields and verify them before signing
+        // Decrypt certificate fields — profile data now lives entirely here.
         const decryptedFields = await MasterCertificate.decryptFields(
             userWallet,
             certificate.keyring,
@@ -190,36 +177,15 @@ async function getDataFromWalletWithOptions(
             certificate.certifier
         );
 
-        // Now get the rest of the data from token
-        const token = await userWallet.listOutputs({
-            basket,
-            includeCustomInstructions: true,
-            limit: 1,
-        });
-
-        if (token.outputs.length === 0) {
-            addError('token', 'No token found');
-            const maybeErrors = Object.keys(errors).length > 0 ? errors : undefined;
-            return {
-                success: false,
-                data: null,
-                errors: maybeErrors,
-            };
-        }
-
-        const output = token.outputs[0];
-        let tokenData: any;
-        try {
-            tokenData = JSON.parse(output.customInstructions);
-        } catch {
-            addError('token', 'Invalid token customInstructions JSON');
-            const maybeErrors = Object.keys(errors).length > 0 ? errors : undefined;
-            return {
-                success: false,
-                data: null,
-                errors: maybeErrors,
-            };
-        }
+        // privateFields and websites are stored as JSON strings inside the cert
+        // (cert fields are flat string→string). Parse them back; tolerate missing
+        // or malformed values so partial certs still hydrate.
+        const safeJsonParse = <T>(raw: string | undefined, fallback: T): T => {
+            if (typeof raw !== 'string' || raw === '') return fallback;
+            try { return JSON.parse(raw) as T; } catch { return fallback; }
+        };
+        const privateFields = safeJsonParse<string[]>(decryptedFields.privateFields, []);
+        const websites = safeJsonParse<ProfileData['websites']>(decryptedFields.websites, []);
 
         // Fetch connections and check for verification certificates
         const connections: ConnectionData[] = [];
@@ -258,14 +224,14 @@ async function getDataFromWalletWithOptions(
         // Build actual response data
         const profileData: ProfileData = {
             displayName: decryptedFields.displayName,
-            description: tokenData.description || '',
+            description: decryptedFields.description || '',
             locationLng: Number(decryptedFields.lng),
             locationLat: Number(decryptedFields.lat),
             email: decryptedFields.email,
             phoneNumber: decryptedFields.phoneNumber,
-            imageKey: tokenData.imageKey || null,
-            privateFields: tokenData.privateFields || [],
-            websites: tokenData.websites || [],
+            imageKey: decryptedFields.imageKey || null,
+            privateFields,
+            websites,
             connections,
         };
 

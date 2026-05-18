@@ -8,6 +8,7 @@ interface GetDataFromWalletOptions {
     certifiers?: string[];
     connectionTypes?: string[];
     profileType?: string;
+    /** @deprecated profile data now lives entirely in the certificate; this is ignored. */
     basket?: string;
 }
 interface ProvidedCertificate {
